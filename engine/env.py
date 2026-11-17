@@ -13,7 +13,8 @@ def load_env() -> None:
         from dotenv import load_dotenv
     except ImportError:
         return
-    load_dotenv(ROOT / ".env")
+    # override=True so a local .env wins over empty leftover shell variables
+    load_dotenv(ROOT / ".env", override=True)
 
 
 def secret(name: str):

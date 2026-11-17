@@ -614,20 +614,19 @@ with tab_ai:
     base_url = setting("LLM_BASE_URL")
     model = setting("LLM_MODEL")
     api_key = setting("LLM_API_KEY", "")
-    configured = bool(base_url and model)
+    local = "localhost" in (base_url or "") or "127.0.0.1" in (base_url or "")
+    configured = bool(base_url and model and (api_key or local))
 
     if not configured:
-        st.info("Set LLM_BASE_URL and LLM_MODEL (and LLM_API_KEY for hosted "
-                "providers) in your .env file to turn on AI reports.")
+        st.info("Set LLM_BASE_URL, LLM_MODEL and LLM_API_KEY in your .env file "
+                "to turn on AI reports.")
     if st.button("Generate report", disabled=not configured):
         try:
             with st.spinner("Writing the report…"):
                 text = ai_report(metrics, base_url, api_key, model)
             st.session_state.report = (metrics_json, text)
         except Exception as e:
-            st.error(f"Could not generate the report ({type(e).__name__}). "
-                     "Check LLM_BASE_URL, LLM_API_KEY and LLM_MODEL. "
-                     "If you use Ollama, make sure it is running.")
+            st.error(f"Could not generate the report: {e}")
 
     rep = st.session_state.get("report")
     if rep:

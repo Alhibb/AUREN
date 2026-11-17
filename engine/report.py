@@ -30,22 +30,34 @@ def ai_report(metrics: dict, base_url: str, api_key: str, model: str,
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    user = SYSTEM + "\n\nPortfolio metrics JSON:\n" + json.dumps(metrics, default=str)
+    reasoning = "gpt-oss" in (model or "") or "groq.com" in (base_url or "")
     payload = {
         "model": model,
-        "temperature": 0.2,
-        "max_tokens": 1500,  # reasoning models spend part of this on thinking
-        "messages": [
+        "messages": [{"role": "user", "content": user}],
+    }
+    if reasoning:
+        # gpt-oss spends tokens on thinking; max_tokens can leave content empty
+        payload["max_completion_tokens"] = 4096
+        payload["include_reasoning"] = False
+        payload["temperature"] = 0.6
+    else:
+        payload["temperature"] = 0.2
+        payload["max_tokens"] = 1500
+        payload["messages"] = [
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": json.dumps(metrics, default=str)},
-        ],
-    }
+        ]
     effort = setting("LLM_REASONING_EFFORT")
     if effort:
         payload["reasoning_effort"] = effort
     r = requests.post(base_url.rstrip("/") + "/chat/completions",
                       json=payload, headers=headers, timeout=timeout)
-    r.raise_for_status()
-    text = clean_output(r.json()["choices"][0]["message"].get("content") or "")
+    if not r.ok:
+        detail = r.text.strip()[:400]
+        raise RuntimeError(f"LLM HTTP {r.status_code}: {detail or r.reason}")
+    msg = r.json()["choices"][0]["message"]
+    text = clean_output(msg.get("content") or "")
     if not text:
         raise RuntimeError("The model returned an empty answer")
     return text
