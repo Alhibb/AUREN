@@ -622,8 +622,7 @@ with tab_ai:
             help="From console.groq.com · saved only in this browser session")
         configured = bool(base_url and model and api_key)
         if not configured:
-            st.info("Enter your Groq API key above, or put LLM_API_KEY in the "
-                    "project `.env` file.")
+            st.info("Please enter your Groq API key above")
     if st.button("Generate report", disabled=not configured):
         try:
             with st.spinner("Writing the report…"):
