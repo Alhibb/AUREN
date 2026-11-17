@@ -1,6 +1,8 @@
 import json
+import os
+import re
 
-import anthropic
+import requests
 
 SYSTEM = (
     "You are a risk analyst writing for a beginner investor. "
@@ -11,11 +13,57 @@ SYSTEM = (
     "End with: 'Analytics only, not investment advice. Past data does not predict the future.'"
 )
 
+NUM = re.compile(r"\d+(?:,\d{3})*(?:\.\d+)?")
 
-def ai_report(metrics: dict, api_key: str, model: str) -> str:
-    client = anthropic.Anthropic(api_key=api_key)
-    msg = client.messages.create(
-        model=model, max_tokens=900, system=SYSTEM,
-        messages=[{"role": "user", "content": json.dumps(metrics, default=str)}],
-    )
-    return msg.content[0].text
+
+def clean_output(text: str) -> str:
+    """Remove <think>...</think> blocks that some open models add."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
+def ai_report(metrics: dict, base_url: str, api_key: str, model: str,
+              timeout: int = 120) -> str:
+    """Call any OpenAI-compatible chat endpoint (Groq, Ollama, OpenRouter, ...)."""
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload = {
+        "model": model,
+        "temperature": 0.2,
+        "max_tokens": 1500,  # reasoning models spend part of this on thinking
+        "messages": [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": json.dumps(metrics, default=str)},
+        ],
+    }
+    effort = os.getenv("LLM_REASONING_EFFORT")
+    if effort:
+        payload["reasoning_effort"] = effort
+    r = requests.post(base_url.rstrip("/") + "/chat/completions",
+                      json=payload, headers=headers, timeout=timeout)
+    r.raise_for_status()
+    text = clean_output(r.json()["choices"][0]["message"].get("content") or "")
+    if not text:
+        raise RuntimeError("The model returned an empty answer")
+    return text
+
+
+def _numbers(text: str) -> list[float]:
+    return [float(m.replace(",", "")) for m in NUM.findall(text)]
+
+
+def unverified_numbers(report: str, metrics: dict) -> list[float]:
+    """Numbers in the report that do not appear in the metrics JSON.
+    Fractions count as matching their percentage (0.34 matches 34).
+    Small whole numbers (1-10) and 100 are ignored."""
+    allowed = set()
+    for v in _numbers(json.dumps(metrics, default=str)):
+        allowed.add(v)
+        allowed.add(v * 100)
+    bad = []
+    for v in _numbers(report):
+        if v == int(v) and (v <= 10 or v == 100):
+            continue
+        if not any(abs(v - a) <= 0.51 for a in allowed):
+            bad.append(v)
+    return bad

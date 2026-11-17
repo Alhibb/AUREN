@@ -1,18 +1,22 @@
 import json
+import os  # CHANGED (Groq)
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from dotenv import load_dotenv  # CHANGED (Groq)
 
 from engine.data import load_prices
 from engine.metrics import (concentration, portfolio_returns, volatility,
                             max_drawdown, correlation, high_pairs)
-from engine.report import ai_report
+from engine.report import ai_report, unverified_numbers  # CHANGED (Groq)
 from engine.score import risk_score, RULE_TABLE
 from engine.universe import SECTORS
 from engine.wallet import (BASE_RPC, is_valid_address, wallet_holdings,
                            holdings_to_portfolio)
+
+load_dotenv()  # CHANGED (Groq): reads .env locally; Streamlit Cloud uses Secrets
 
 st.set_page_config(page_title="AUREN · See the risk before it sees you",
                    layout="wide")
@@ -115,6 +119,11 @@ def secret(name):
         return None
 
 
+def setting(name, default=None):  # CHANGED (Groq)
+    """Read config from .env / environment first, then Streamlit secrets."""
+    return os.getenv(name) or secret(name) or default
+
+
 @st.cache_data(ttl=3600, show_spinner="Loading 2 years of prices…")
 def get_prices(tickers: tuple) -> pd.DataFrame:
     return load_prices(list(tickers))
@@ -165,7 +174,8 @@ def load_wallet():
             "error", "Enter a valid Base address: 0x followed by 40 characters.")
         return
     try:
-        info = wallet_holdings(addr, set(SECTORS), secret("BASE_RPC_URL") or BASE_RPC)
+        info = wallet_holdings(addr, set(SECTORS),
+                               setting("BASE_RPC_URL", BASE_RPC))  # CHANGED (Groq)
     except Exception as e:
         st.session_state.wallet_msg = (
             "error", f"Could not read the wallet right now ({type(e).__name__}). "
@@ -252,8 +262,11 @@ with st.sidebar:
         f'<div class="sub">{level}</div></div>', unsafe_allow_html=True)
 
 # ------------------------------------------------------------------- tabs
-tab_pf, tab_score, tab_risk, tab_corr, tab_whatif, tab_ai = st.tabs(
-    ["Portfolio", "Risk Overview", "Risk", "Correlation", "What-if", "AI Report"])
+# NEW: added the "Concentration" tab
+(tab_pf, tab_conc, tab_score, tab_risk,
+ tab_corr, tab_whatif, tab_ai) = st.tabs(
+    ["Portfolio", "Concentration", "Risk Overview", "Risk",
+     "Correlation", "What-if", "AI Report"])
 
 # ---- Portfolio (MVP 1-3)
 with tab_pf:
@@ -331,6 +344,66 @@ with tab_pf:
     elif info is not None:
         st.caption(f"Wallet read worked ({info['n_tokens']} tokenized stocks checked), "
                    "but none are held at this address.")
+
+# ---- NEW: Concentration
+with tab_conc:
+    cc1, cc2, cc3, cc4 = st.columns(4)
+    cc1.markdown(card("Largest holding",
+                      f"{c['top_asset']} · {c['top_weight']:.0%}",
+                      "Over 30% adds risk points"), unsafe_allow_html=True)
+    cc2.markdown(card("Top 3 holdings", f"{c['top3_weight']:.0%}",
+                      "Share held in the three biggest positions"),
+                 unsafe_allow_html=True)
+    cc3.markdown(card("Effective assets", f"{c['effective_assets']:.1f}",
+                      f"Behaves like {c['effective_assets']:.1f} equal holdings, "
+                      f"not {n}", gold=True), unsafe_allow_html=True)
+    cc4.markdown(card("Concentration index", f"{c['hhi']:.2f}",
+                      "HHI. 1.00 means everything in one asset"),
+                 unsafe_allow_html=True)
+
+    section("Holdings by weight",
+            "The dashed line is AUREN's 30% single-holding rule")
+    wts = weights.sort_values()
+    bar_colors = [GOLD if v > 0.30 else "#5B5F68" for v in wts.values]
+    fig = go.Figure(go.Bar(
+        x=wts.values, y=wts.index, orientation="h", marker_color=bar_colors,
+        text=[f"{v:.0%}" for v in wts.values], textposition="outside",
+        textfont=dict(color=TEXT), hovertemplate="%{y}: %{x:.1%}<extra></extra>"))
+    fig.add_vline(x=0.30, line_dash="dash", line_color=GREY,
+                  annotation_text="30% rule", annotation_font_color=GREY)
+    style(fig, height=max(240, 60 * len(wts) + 60))
+    fig.update_xaxes(tickformat=".0%",
+                     range=[0, max(0.35, min(1.0, wts.max() * 1.25))])
+    fig.update_yaxes(gridcolor="rgba(0,0,0,0)")
+    with st.container(border=True):
+        st.plotly_chart(fig)
+
+    if c["top_weight"] > 0.30:
+        st.markdown(callout(
+            f"<b>{c['top_asset']}</b> is {c['top_weight']:.0%} of the portfolio, "
+            f"above the 30% line. A lot rides on one holding."),
+            unsafe_allow_html=True)
+    else:
+        st.markdown(callout(
+            f"No single holding is above 30%. The largest, <b>{c['top_asset']}</b>, "
+            f"is {c['top_weight']:.0%}.", muted=True), unsafe_allow_html=True)
+    drop = 0.20
+    st.markdown(callout(
+        f"<b>Illustration:</b> if {c['top_asset']} fell {drop:.0%}, the portfolio would "
+        f"lose about {c['top_weight'] * drop:.1%} from that one holding alone. "
+        f"This is simple arithmetic, not a prediction.", muted=True),
+        unsafe_allow_html=True)
+
+    with st.expander("Show the maths"):
+        terms = " + ".join(f"{w:.2f}²" for w in weights.sort_values(ascending=False))
+        st.markdown(
+            f"**Your numbers:** {terms} = **{c['hhi']:.2f}** (the concentration index)\n\n"
+            f"**Effective assets** = 1 ÷ {c['hhi']:.2f} = **{c['effective_assets']:.1f}**")
+        st.caption("Square each weight and add them up to get the index (HHI). "
+                   "Dividing 1 by it tells you how many equal-sized holdings the "
+                   "portfolio behaves like. Equal weights give exactly the number of assets.")
+    st.caption("Concentration uses today's weights, not past prices. "
+               "Analytics only, not investment advice.")
 
 # ---- Risk Overview
 with tab_score:
@@ -486,6 +559,9 @@ with tab_whatif:
                 ("Risk score", f"{A['score']} ({A['level']})", f"{B['score']} ({B['level']})"),
                 ("Largest holding", f"{A['c']['top_asset']} · {A['c']['top_weight']:.0%}",
                  f"{B['c']['top_asset']} · {B['c']['top_weight']:.0%}"),
+                # NEW: concentration rows
+                ("Top 3 holdings", f"{A['c']['top3_weight']:.0%}",
+                 f"{B['c']['top3_weight']:.0%}"),
                 ("Effective number of assets", f"{A['c']['effective_assets']:.1f}",
                  f"{B['c']['effective_assets']:.1f}"),
                 ("Top sector", f"{A['exposure'].idxmax()} · {A['exposure'].max():.0%}",
@@ -537,6 +613,8 @@ with tab_ai:
         "portfolio_value_usd": round(size, 2),
         "holdings_weight": {t: round(float(w), 4) for t, w in weights.items()},
         "largest_holding": {c["top_asset"]: round(c["top_weight"], 4)},
+        "top_3_holdings_weight": round(c["top3_weight"], 4),          # NEW
+        "concentration_index_hhi": round(c["hhi"], 4),                # NEW
         "effective_assets": round(c["effective_assets"], 2),
         "volatility_annualised": round(vol, 4),
         "max_drawdown": round(mdd, 4),
@@ -544,19 +622,25 @@ with tab_ai:
         "correlated_pairs_above_0.7": [[a, b, v] for a, b, v in pairs],
     }
     metrics_json = json.dumps(metrics, sort_keys=True, default=str)
-    api_key, model = secret("ANTHROPIC_API_KEY"), secret("LLM_MODEL")
 
-    if not (api_key and model):
-        st.info("Add ANTHROPIC_API_KEY and LLM_MODEL to the Streamlit secrets "
-                "to turn on AI reports.")
-    if st.button("Generate report", disabled=not (api_key and model)):
+    # CHANGED (Groq): config comes from .env or Streamlit secrets
+    base_url = setting("LLM_BASE_URL")
+    model = setting("LLM_MODEL")
+    api_key = setting("LLM_API_KEY", "")
+    configured = bool(base_url and model)
+
+    if not configured:
+        st.info("Set LLM_BASE_URL and LLM_MODEL (and LLM_API_KEY for hosted "
+                "providers) in your .env file to turn on AI reports.")
+    if st.button("Generate report", disabled=not configured):
         try:
             with st.spinner("Writing the report…"):
-                text = ai_report(metrics, api_key, model)
+                text = ai_report(metrics, base_url, api_key, model)
             st.session_state.report = (metrics_json, text)
         except Exception as e:
             st.error(f"Could not generate the report ({type(e).__name__}). "
-                     "Check the API key and model name.")
+                     "Check LLM_BASE_URL, LLM_API_KEY and LLM_MODEL. "
+                     "If you use Ollama, make sure it is running.")
 
     rep = st.session_state.get("report")
     if rep:
@@ -564,6 +648,14 @@ with tab_ai:
             st.markdown(callout("The portfolio changed since this report was written. "
                                 "Generate it again.", muted=True), unsafe_allow_html=True)
         st.markdown(rep[1])
+        bad = unverified_numbers(rep[1], metrics)
+        if bad:
+            st.warning("These numbers in the report were not found in the data: "
+                       + ", ".join(f"{b:g}" for b in bad)
+                       + ". Treat them with caution.")
+        else:
+            st.caption("No numbers outside the data were found. "
+                       "Small whole numbers are not checked.")
         reasons = [f"- +{p} · {why}" for p, why in hits] or ["- No rules triggered"]
         md = "\n".join([
             "# AUREN risk report", "",
@@ -571,6 +663,7 @@ with tab_ai:
             "## Why this score", *reasons, "",
             "## Key numbers",
             f"- Largest holding: {c['top_asset']} ({c['top_weight']:.0%})",
+            f"- Top 3 holdings: {c['top3_weight']:.0%}",
             f"- Effective number of assets: {c['effective_assets']:.1f}",
             f"- Volatility (annualised): {vol:.1%}",
             f"- Worst drawdown: {mdd:.1%}", "",
