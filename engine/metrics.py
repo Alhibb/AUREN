@@ -43,4 +43,4 @@ def high_pairs(corr: pd.DataFrame, threshold: float = 0.7) -> list[tuple]:
             if corr.loc[a, b] > threshold]
 
 def sector_exposure(w: pd.Series) -> pd.Series:
-    return w.groupby(w.index.map(lambda t: SECTORS.get(t, "Other"))).sum().sort_values(ascending=False)
+    return w.groupby(w.index.map(lambda t: GROUPS.get(t, "Other"))).sum().sort_values(ascending=False)
