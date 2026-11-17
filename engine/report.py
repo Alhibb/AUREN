@@ -1,8 +1,11 @@
 import json
-import os
 import re
 
 import requests
+
+from engine.env import load_env, setting
+
+load_env()
 
 SYSTEM = (
     "You are a risk analyst writing for a beginner investor. "
@@ -36,7 +39,7 @@ def ai_report(metrics: dict, base_url: str, api_key: str, model: str,
             {"role": "user", "content": json.dumps(metrics, default=str)},
         ],
     }
-    effort = os.getenv("LLM_REASONING_EFFORT")
+    effort = setting("LLM_REASONING_EFFORT")
     if effort:
         payload["reasoning_effort"] = effort
     r = requests.post(base_url.rstrip("/") + "/chat/completions",

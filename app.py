@@ -1,13 +1,12 @@
 import json
-import os  # CHANGED (Groq)
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from dotenv import load_dotenv  # CHANGED (Groq)
 
 from engine.data import load_prices
+from engine.env import load_env, setting
 from engine.metrics import (concentration, portfolio_returns, volatility,
                             max_drawdown, correlation, high_pairs)
 from engine.report import ai_report, unverified_numbers  # CHANGED (Groq)
@@ -16,7 +15,7 @@ from engine.universe import SECTORS
 from engine.wallet import (BASE_RPC, is_valid_address, wallet_holdings,
                            holdings_to_portfolio)
 
-load_dotenv()  # CHANGED (Groq): reads .env locally; Streamlit Cloud uses Secrets
+load_env()  # .env locally; Streamlit Cloud uses Secrets
 
 st.set_page_config(page_title="AUREN · See the risk before it sees you",
                    layout="wide")
@@ -110,18 +109,6 @@ def style(fig, height=380, title=None):
     fig.update_xaxes(gridcolor=GRID, zeroline=False, showline=False, color=GREY)
     fig.update_yaxes(gridcolor=GRID, zeroline=False, showline=False, color=GREY)
     return fig
-
-
-def secret(name):
-    try:
-        return st.secrets[name]
-    except Exception:
-        return None
-
-
-def setting(name, default=None):  # CHANGED (Groq)
-    """Read config from .env / environment first, then Streamlit secrets."""
-    return os.getenv(name) or secret(name) or default
 
 
 @st.cache_data(ttl=3600, show_spinner="Loading 2 years of prices…")
