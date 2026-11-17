@@ -610,16 +610,20 @@ with tab_ai:
     }
     metrics_json = json.dumps(metrics, sort_keys=True, default=str)
 
-    # CHANGED (Groq): config comes from .env or Streamlit secrets
-    base_url = setting("LLM_BASE_URL")
-    model = setting("LLM_MODEL")
+    base_url = setting("LLM_BASE_URL", "https://api.groq.com/openai/v1")
+    model = setting("LLM_MODEL", "openai/gpt-oss-120b")
     api_key = setting("LLM_API_KEY", "")
     local = "localhost" in (base_url or "") or "127.0.0.1" in (base_url or "")
     configured = bool(base_url and model and (api_key or local))
 
     if not configured:
-        st.info("Set LLM_BASE_URL, LLM_MODEL and LLM_API_KEY in your .env file "
-                "to turn on AI reports.")
+        api_key = st.text_input(
+            "Groq API key", type="password",
+            help="From console.groq.com · saved only in this browser session")
+        configured = bool(base_url and model and api_key)
+        if not configured:
+            st.info("Enter your Groq API key above, or put LLM_API_KEY in the "
+                    "project `.env` file.")
     if st.button("Generate report", disabled=not configured):
         try:
             with st.spinner("Writing the report…"):

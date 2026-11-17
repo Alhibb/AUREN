@@ -6,15 +6,41 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_MODEL = "openai/gpt-oss-120b"
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.is_file():
+        return values
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip("'").strip('"')
+        if key:
+            values[key] = val
+    return values
+
 
 def load_env() -> None:
-    """Read `.env` next to app.py, even if Streamlit's cwd is a subfolder."""
+    """Read `.env` next to app.py. Does not require python-dotenv."""
+    parsed = _parse_env_file(ROOT / ".env")
+    parsed.update(_parse_env_file(Path.cwd() / ".env"))
+    for key, val in parsed.items():
+        os.environ[key] = val
+    # Defaults so Groq works once LLM_API_KEY is set
+    os.environ.setdefault("LLM_BASE_URL", GROQ_BASE_URL)
+    os.environ.setdefault("LLM_MODEL", GROQ_MODEL)
+    os.environ.setdefault("LLM_REASONING_EFFORT", "low")
     try:
         from dotenv import load_dotenv
+        load_dotenv(ROOT / ".env", override=True)
     except ImportError:
-        return
-    # override=True so a local .env wins over empty leftover shell variables
-    load_dotenv(ROOT / ".env", override=True)
+        pass
 
 
 def secret(name: str):
@@ -32,4 +58,7 @@ def setting(name: str, default=None):
         value = value.strip()
         if value:
             return value
-    return secret(name) or default
+    found = secret(name)
+    if found is not None and str(found).strip():
+        return str(found).strip()
+    return default
